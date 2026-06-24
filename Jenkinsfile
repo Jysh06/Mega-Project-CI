@@ -1,41 +1,44 @@
 pipeline {
     agent any
-    
+
     tools {
         maven 'maven3'
-    } 
-    
+        jdk 'jdk17'
+    }
+
     environment {
-        SCANNER_HOME = tool 'sonar-scanner'
+        SCANNER_HOME = tool('sonar-scanner')
         IMAGE_TAG = "v${BUILD_NUMBER}"
     }
 
     stages {
-        stage('Git Checkout') {
+
+        stage('GIT CHECKOUT') {
             steps {
-                git branch: 'main', credentialsId: 'git', url: 'https://github.com/jaiswaladi246/Mega-Project-CI.git'
+                git branch: 'main',
+                    url: 'https://github.com/Jysh06/Mega-Project-CI.git'
             }
         }
-        
-        stage('Compile') {
+
+        stage('COMPILE') {
             steps {
-                sh "mvn compile"
+                sh 'mvn compile'
             }
         }
-        
-        stage('Testing') {
+
+        stage('TESTING') {
             steps {
-                sh "mvn test"
+                sh 'mvn test'
             }
         }
-        
-        stage('Trivy FS Scan') {
+
+        stage('TRIVY FILE SCAN') {
             steps {
-                sh "trivy fs --format table -o fs-report.html ."
+                sh 'trivy fs --format table -o fs-report.html .'
             }
         }
-        
-        stage('Sonar Analysis') {
+
+        stage('SONAR ANALYSIS') {
             steps {
                 withSonarQubeEnv('sonar') {
                     sh '''
@@ -47,79 +50,90 @@ pipeline {
                 }
             }
         }
-        
-        stage('Quality Gate Check') {
+
+        stage('QUALITY CHECK') {
             steps {
                 timeout(time: 1, unit: 'HOURS') {
                     waitForQualityGate abortPipeline: false, credentialsId: 'sonar-token'
                 }
             }
         }
-        
-        stage('Build') {
+
+        stage('BUILD') {
             steps {
-                sh "mvn package"
+                sh 'mvn package'
             }
         }
-        
-        stage('Publish To Nexus') {
+
+        stage('NEXUS DEPLOYMENT') {
             steps {
-                withMaven(globalMavenSettingsConfig: 'devopsshack', maven: 'maven3', traceability: true) {
-                    sh "mvn deploy"
+                withMaven(
+                    globalMavenSettingsConfig: 'gconfig',
+                    jdk: 'jdk17',
+                    maven: 'maven3',
+                    traceability: true
+                ) {
+                    sh 'mvn deploy'
                 }
             }
         }
-        
-        stage('Docker Image Build & Tag') {
+
+        stage('DOCKER BUILD AND TAG') {
             steps {
                 script {
                     withDockerRegistry(credentialsId: 'docker-cred') {
-                        sh "docker build -t adijaiswal/bankapp:$IMAGE_TAG ."
+                        sh "docker build -t jysh06/bankapp:${IMAGE_TAG} ."
                     }
                 }
             }
         }
-        
-        stage('Scan Image') {
+
+        stage('SCAN IMAGE') {
             steps {
-                sh "trivy image --format table -o image-report.html adijaiswal/bankapp:$IMAGE_TAG"
+                sh "trivy image --format table -o image-report.html jysh06/bankapp:${IMAGE_TAG}"
             }
         }
-        
-        stage('Push Docker Image') {
+
+        stage('DOCKER PUSH') {
             steps {
                 script {
                     withDockerRegistry(credentialsId: 'docker-cred') {
-                        sh "docker push adijaiswal/bankapp:$IMAGE_TAG"
+                        sh "docker push jysh06/bankapp:${IMAGE_TAG}"
                     }
                 }
             }
         }
-        
-        stage('Update Manifest File in Mega-Project-CD') {
+
+        stage('UPDATE MANIFEST IN MEGA CD') {
             steps {
                 script {
-                    // Clean workspace before starting
                     cleanWs()
 
-                    withCredentials([usernamePassword(credentialsId: 'git', usernameVariable: 'GIT_USERNAME', passwordVariable: 'GIT_PASSWORD')]) {
+                    withCredentials([
+                        usernamePassword(
+                            credentialsId: 'gitcred',
+                            usernameVariable: 'GIT_USERNAME',
+                            passwordVariable: 'GIT_TOKEN'
+                        )
+                    ]) {
+
                         sh '''
-                            # Clone the Mega-Project-CD repository
-                            git clone https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/jaiswaladi246/Mega-Project-CD.git
-                            
-                            # Update the image tag in the manifest.yaml file
+                            git clone https://${GIT_USERNAME}:${GIT_TOKEN}@github.com/Jysh06/Mega-Project-CD.git
+
                             cd Mega-Project-CD
-                            sed -i "s|adijaiswal/bankapp:.*|adijaiswal/bankapp:${IMAGE_TAG}|" Manifest/manifest.yaml
-                            
-                            # Confirm changes
+
+                            sed -i "s|jysh06/bankapp:.*|jysh06/bankapp:${IMAGE_TAG}|g" Manifest/manifest.yaml
+
                             echo "Updated manifest file contents:"
                             cat Manifest/manifest.yaml
-                            
-                            # Commit and push the changes
+
                             git config user.name "Jenkins"
                             git config user.email "jenkins@example.com"
+
                             git add Manifest/manifest.yaml
-                            git commit -m "Update image tag to ${IMAGE_TAG}"
+
+                            git commit -m "Update image tag to ${IMAGE_TAG}" || echo "No changes to commit"
+
                             git push origin main
                         '''
                     }
@@ -127,40 +141,45 @@ pipeline {
             }
         }
     }
-    
-    
-post {
-    always {
-        script {
-            def jobName = env.JOB_NAME
-            def buildNumber = env.BUILD_NUMBER
-            def pipelineStatus = currentBuild.result ?: 'UNKNOWN'
-            def bannerColor = pipelineStatus.toUpperCase() == 'SUCCESS' ? 'green' : 'red'
 
-            def body = """
-                <html>
-                <body>
-                <div style="border: 4px solid ${bannerColor}; padding: 10px;">
-                <h2>${jobName} - Build ${buildNumber}</h2>
-                <div style="background-color: ${bannerColor}; padding: 10px;">
-                <h3 style="color: white;">Pipeline Status: ${pipelineStatus.toUpperCase()}</h3>
-                </div>
-                <p>Check the <a href="${BUILD_URL}">console output</a>.</p>
-                </div>
-                </body>
-                </html>
-            """
+    post {
+        always {
+            script {
+                def jobName = env.JOB_NAME
+                def buildNumber = env.BUILD_NUMBER
+                def pipelineStatus = currentBuild.result ?: 'UNKNOWN'
+                def bannerColor = pipelineStatus.toUpperCase() == 'SUCCESS' ? 'green' : 'red'
 
-            emailext (
-                subject: "${jobName} - Build ${buildNumber} - ${pipelineStatus.toUpperCase()}",
-                body: body,
-                to: '567adddi.jais@gmail.com',
-                from: 'jenkins@devopsshack.com',
-                replyTo: 'jenkins@devopsshack.com',
-                mimeType: 'text/html',
-               
-            )
+                def body = """
+                    <html>
+                    <body>
+                        <div style="border: 4px solid ${bannerColor}; padding: 10px;">
+                            <h2>${jobName} - Build ${buildNumber}</h2>
+
+                            <div style="background-color: ${bannerColor}; padding: 10px;">
+                                <h3 style="color: white;">
+                                    Pipeline Status: ${pipelineStatus.toUpperCase()}
+                                </h3>
+                            </div>
+
+                            <p>
+                                Check the <a href="${BUILD_URL}">console output</a>.
+                            </p>
+                        </div>
+                    </body>
+                    </html>
+                """
+
+                emailext(
+                    subject: "${jobName} - Build ${buildNumber} - ${pipelineStatus.toUpperCase()}",
+                    body: body,
+                    to: 'jayeshpat23.jp@gmail.com',
+                    from: 'jayeshpat23.jp@gmail.com',
+                    replyTo: 'jayeshpat23.jp@gmail.com',
+                    mimeType: 'text/html'
+                )
+            }
         }
     }
 }
-}
+
